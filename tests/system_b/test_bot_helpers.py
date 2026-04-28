@@ -1,4 +1,5 @@
-from system_b_air.bot import _fmt, _parse_hours
+from system_b_air.bot import _parse_hours
+from system_b_air.formatting import fmt_num as _fmt
 
 
 def test_fmt_none():
