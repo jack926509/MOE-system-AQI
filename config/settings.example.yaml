@@ -1,0 +1,40 @@
+# 系統 B（空品 Bot）設定範本。複製為 config/settings.yaml 後填值。
+# settings.yaml 已 gitignore，不會提交。
+
+moenv:
+  api_key: ${MOENV_API_KEY}      # 從 .env 注入；亦可直接寫死
+  base_url: https://data.moenv.gov.tw/api/v2
+  page_size: 1000
+  timeout: 30
+  max_retries: 3
+
+databases:
+  air_quality: data/air_quality.db
+
+telegram:
+  bot_token: ${TELEGRAM_BOT_TOKEN}
+  chat_ids:
+    daily: ${TELEGRAM_CHAT_ID_DAILY}
+    alert: ${TELEGRAM_CHAT_ID_ALERT}
+    admin: ${TELEGRAM_CHAT_ID_ADMIN}
+
+air_quality_alerts:
+  # 站層級：每站個別比對命中即發
+  station:
+    aqi: 150              # 對空氣品質不健康
+    pm25: 35.5            # μg/m³，PM2.5 24h 標準
+    so2: 0.075            # ppm
+    no2: 0.1              # ppm
+  # 區層級：同小時內某區 ≥ ratio 站超標時，發一則區域事件
+  region:
+    aqi: 150
+    ratio: 0.3            # 30%
+
+daily_report:
+  hour: 8
+  minute: 0
+  timezone: Asia/Taipei
+
+logging:
+  level: INFO
+  format: "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
