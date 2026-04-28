@@ -81,14 +81,18 @@ def run_etl() -> int:
         rows.append(row)
 
     if rows:
+        chunk_size = 500
         with db.session() as session:
-            stmt = sqlite_insert(AQIRecord).values(rows)
-            stmt = stmt.on_conflict_do_nothing(
-                index_elements=["site_name", "publish_time"]
-            )
-            result = session.execute(stmt)
+            for i in range(0, len(rows), chunk_size):
+                chunk = rows[i : i + chunk_size]
+                stmt = sqlite_insert(AQIRecord).values(chunk).on_conflict_do_nothing(
+                    index_elements=["site_name", "publish_time"]
+                )
+                result = session.execute(stmt)
+                rc = result.rowcount or 0
+                if rc > 0:
+                    inserted += rc
             session.commit()
-            inserted = result.rowcount or 0
 
     logger.info(
         "AQI realtime ETL: fetched=%d valid=%d inserted=%d skipped=%d",

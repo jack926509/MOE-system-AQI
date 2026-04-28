@@ -69,4 +69,6 @@ def parse_minguo_date(raw: str | None) -> Optional[datetime]:
 def to_iso(dt: datetime | None) -> str:
     if dt is None:
         return ""
-    return dt.replace(tzinfo=dt.tzinfo or timezone.utc).isoformat()
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.isoformat()

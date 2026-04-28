@@ -58,14 +58,18 @@ def run_etl() -> int:
     rows = [r for r in (_to_row(rec) for rec in records) if r]
     inserted = 0
     if rows:
+        chunk_size = 500
         with db.session() as session:
-            stmt = sqlite_insert(ForecastRecord).values(rows)
-            stmt = stmt.on_conflict_do_nothing(
-                index_elements=["region", "forecast_date", "publish_time"]
-            )
-            result = session.execute(stmt)
+            for i in range(0, len(rows), chunk_size):
+                chunk = rows[i : i + chunk_size]
+                stmt = sqlite_insert(ForecastRecord).values(chunk).on_conflict_do_nothing(
+                    index_elements=["region", "forecast_date", "publish_time"]
+                )
+                result = session.execute(stmt)
+                rc = result.rowcount or 0
+                if rc > 0:
+                    inserted += rc
             session.commit()
-            inserted = result.rowcount or 0
 
     logger.info(
         "Forecast ETL: fetched=%d valid=%d inserted=%d",

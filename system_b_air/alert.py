@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Iterable
 
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from core.config import StationAlertThresholds, RegionAlertThresholds
 from core.db import Database
@@ -26,6 +26,16 @@ AQI_FLAGS: list[tuple[float, str, str]] = [
     (300, "🟣", "非常不健康"),
     (500, "🟤", "危害"),
 ]
+
+# 污染物顯示單位（與 settings.example.yaml 一致）
+_POLLUTANT_UNITS: dict[str, str] = {
+    "pm25": "μg/m³",
+    "pm10": "μg/m³",
+    "so2": "ppm",
+    "no2": "ppm",
+    "o3": "ppb",
+    "co": "ppm",
+}
 
 
 def aqi_flag(aqi: float | None) -> tuple[str, str]:
@@ -49,24 +59,23 @@ class AlertEvent:
     site_name: str | None = None
 
     def to_message(self) -> str:
-        flag, label = aqi_flag(self.value if self.pollutant == "aqi" else None)
         head = f"[{self.region}]"
         if self.scope == "station" and self.site_name:
             head += f"[{self.site_name}]"
         ts = self.publish_time.strftime("%Y-%m-%d %H:%M")
         if self.pollutant == "aqi":
+            flag, label = aqi_flag(self.value)
+            scope_label = "區域空品警示" if self.scope == "region" else "空氣品質警示"
             return (
-                f"{flag} <b>{head} 空氣品質警示</b>\n"
+                f"{flag} <b>{head} {scope_label}</b>\n"
                 f"AQI = <b>{self.value:.0f}</b> ({label})，閾值 {self.threshold:.0f}\n"
                 f"時間 {ts}"
             )
-        unit = {"pm25": "μg/m³", "so2": "ppm", "no2": "ppm"}.get(
-            self.pollutant, ""
-        )
+        unit = _POLLUTANT_UNITS.get(self.pollutant, "")
         return (
             f"⚠️ <b>{head} {self.pollutant.upper()} 超標</b>\n"
             f"{self.pollutant.upper()} = <b>{self.value:.2f}</b> {unit}，"
-            f"閾值 {self.threshold:.2f}\n"
+            f"閾值 {self.threshold:.2f} {unit}\n"
             f"時間 {ts}"
         )
 
@@ -138,25 +147,53 @@ def _check_region(
 def _persist_dedup(
     db: Database, events: list[AlertEvent]
 ) -> list[AlertEvent]:
-    """寫入 AlertLog，重複者過濾掉。"""
-    new_events: list[AlertEvent] = []
+    """寫入 AlertLog，重複者過濾掉。
+
+    使用單次 SELECT 找出已存在的 dedup key，再 batch insert 新事件，
+    避免每事件一次 commit 造成 N+1 round-trip。
+    """
+    if not events:
+        return []
+
     with db.session() as session:
+        keys = {(e.scope, e.target, e.pollutant, e.publish_time) for e in events}
+        existing_rows = session.execute(
+            select(
+                AlertLog.scope,
+                AlertLog.target,
+                AlertLog.pollutant,
+                AlertLog.publish_time,
+            ).where(AlertLog.scope.in_({k[0] for k in keys}))
+        ).all()
+        existing = {tuple(row) for row in existing_rows}
+
+        seen: set[tuple[str, str, str, datetime]] = set()
+        new_events: list[AlertEvent] = []
+        rows: list[dict] = []
         for ev in events:
-            log = AlertLog(
-                scope=ev.scope,
-                target=ev.target,
-                pollutant=ev.pollutant,
-                value=ev.value,
-                threshold=ev.threshold,
-                publish_time=ev.publish_time,
-            )
-            session.add(log)
-            try:
-                session.commit()
-                new_events.append(ev)
-            except IntegrityError:
-                session.rollback()
+            key = (ev.scope, ev.target, ev.pollutant, ev.publish_time)
+            if key in existing or key in seen:
                 continue
+            seen.add(key)
+            new_events.append(ev)
+            rows.append(
+                dict(
+                    scope=ev.scope,
+                    target=ev.target,
+                    pollutant=ev.pollutant,
+                    value=ev.value,
+                    threshold=ev.threshold,
+                    publish_time=ev.publish_time,
+                )
+            )
+
+        if rows:
+            stmt = sqlite_insert(AlertLog).values(rows).on_conflict_do_nothing(
+                index_elements=["scope", "target", "pollutant", "publish_time"]
+            )
+            session.execute(stmt)
+            session.commit()
+
     return new_events
 
 
