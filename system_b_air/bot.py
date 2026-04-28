@@ -5,6 +5,8 @@
 """
 from __future__ import annotations
 
+import asyncio
+import html
 import logging
 from datetime import datetime, timedelta
 
@@ -36,23 +38,30 @@ HELP_TEXT = (
     "/regions — 8 區與所屬縣市\n"
     "/now — 8 區即時總覽\n"
     "/aqi &lt;區 或 測站&gt; — 區或單站詳情\n"
-    "/trend &lt;測站&gt; — 該站近 24h 趨勢\n"
+    "/trend &lt;測站&gt; [hours] — 該站近 N 小時趨勢（預設 24）\n"
     "/forecast &lt;區&gt; — 該區明日預報\n"
     "/report — 立刻產 24h 日報\n"
     "/help — 顯示本說明"
 )
 
+# 顯示輔助：None 才以 — 取代，0 仍應顯示
+def _fmt(value, spec: str = "") -> str:
+    if value is None:
+        return "—"
+    if spec:
+        return format(value, spec)
+    return str(value)
+
 
 def _latest_records(db: Database) -> list[AQIRecord]:
+    """單次 query：取最新 publish_time 的所有站點。"""
     with db.session() as session:
-        latest = session.execute(
-            select(AQIRecord.publish_time).order_by(AQIRecord.publish_time.desc()).limit(1)
-        ).scalar_one_or_none()
-        if latest is None:
-            return []
+        subq = select(AQIRecord.publish_time).order_by(
+            AQIRecord.publish_time.desc()
+        ).limit(1).scalar_subquery()
         return list(
             session.execute(
-                select(AQIRecord).where(AQIRecord.publish_time == latest)
+                select(AQIRecord).where(AQIRecord.publish_time == subq)
             ).scalars()
         )
 
@@ -69,7 +78,7 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def cmd_regions(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     db: Database = ctx.application.bot_data["db"]
-    rows = _latest_records(db)
+    rows = await asyncio.to_thread(_latest_records, db)
     by_region: dict[str, list[AQIRecord]] = {r: [] for r in REGIONS}
     for r in rows:
         by_region.setdefault(r.region, []).append(r)
@@ -87,7 +96,7 @@ async def cmd_regions(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def cmd_now(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     db: Database = ctx.application.bot_data["db"]
-    rows = _latest_records(db)
+    rows = await asyncio.to_thread(_latest_records, db)
     if not rows:
         await update.message.reply_text("尚無資料，請等下一輪 ETL")
         return
@@ -98,17 +107,18 @@ async def cmd_now(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     for region in REGIONS:
         group = by_region.get(region, [])
         aqis = [r.aqi for r in group if r.aqi is not None]
+        total = len(REGION_COUNTIES.get(region, ()))
         if not aqis:
-            lines.append(f"⚪ <b>{region}</b>　0/{len(REGION_COUNTIES[region])} 站有資料")
+            lines.append(f"⚪ <b>{region}</b>　0/{total} 站有資料")
             continue
         avg = sum(aqis) / len(aqis)
         worst = max((r for r in group if r.aqi is not None), key=lambda r: r.aqi or 0)
         flag, _ = aqi_flag(avg)
         lines.append(
             f"{flag} <b>{region}</b>　均 {avg:.0f}　"
-            f"最高 {worst.aqi:.0f}（{worst.site_name}）"
+            f"最高 {worst.aqi:.0f}（{html.escape(worst.site_name)}）"
         )
-    publish = rows[0].publish_time.strftime("%m-%d %H:%M")
+    publish = max(r.publish_time for r in rows).strftime("%m-%d %H:%M")
     lines.append("")
     lines.append(f"資料時間：{publish}")
     await update.message.reply_html("\n".join(lines))
@@ -121,7 +131,7 @@ async def cmd_aqi(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         return
     keyword = " ".join(ctx.args).strip()
     region = region_alias(keyword)
-    rows = _latest_records(db)
+    rows = await asyncio.to_thread(_latest_records, db)
     if region:
         group = [r for r in rows if r.region == region]
         if not group:
@@ -131,16 +141,17 @@ async def cmd_aqi(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         lines = [f"<b>{region} 即時測站</b>", ""]
         for r in group:
             flag, _ = aqi_flag(r.aqi)
-            aqi = f"{r.aqi:.0f}" if r.aqi is not None else "—"
-            pm25 = f"{r.pm25:.1f}" if r.pm25 is not None else "—"
+            aqi = _fmt(r.aqi, ".0f")
+            pm25 = _fmt(r.pm25, ".1f")
             poll = r.pollutant or "-"
             lines.append(
-                f"{flag} <b>{r.site_name}</b>　AQI {aqi}　PM2.5 {pm25}　主污染 {poll}"
+                f"{flag} <b>{html.escape(r.site_name)}</b>　"
+                f"AQI {aqi}　PM2.5 {pm25}　主污染 {html.escape(poll)}"
             )
         await update.message.reply_html("\n".join(lines))
         return
 
-    # 否則視為測站名（精確或部分匹配）
+    # 否則視為測站名（精確優先，部分匹配次之）
     target = [r for r in rows if r.site_name == keyword]
     if not target:
         target = [r for r in rows if keyword in r.site_name]
@@ -150,46 +161,77 @@ async def cmd_aqi(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     r = target[0]
     flag, label = aqi_flag(r.aqi)
     lines = [
-        f"{flag} <b>[{r.region}][{r.site_name}]</b>　{label}",
+        f"{flag} <b>[{r.region}][{html.escape(r.site_name)}]</b>　{label}",
         "",
-        f"AQI　 {r.aqi or '—'}",
-        f"PM2.5 {r.pm25 or '—'} μg/m³",
-        f"PM10　{r.pm10 or '—'} μg/m³",
-        f"O3　 {r.o3 or '—'} ppb",
-        f"SO2　{r.so2 or '—'} ppb",
-        f"NO2　{r.no2 or '—'} ppb",
-        f"CO　 {r.co or '—'} ppm",
-        f"主污染 {r.pollutant or '-'}",
+        f"AQI　 {_fmt(r.aqi, '.0f')}",
+        f"PM2.5 {_fmt(r.pm25, '.1f')} μg/m³",
+        f"PM10　{_fmt(r.pm10, '.1f')} μg/m³",
+        f"O3　 {_fmt(r.o3, '.1f')} ppb",
+        f"SO2　{_fmt(r.so2, '.3f')} ppm",
+        f"NO2　{_fmt(r.no2, '.3f')} ppm",
+        f"CO　 {_fmt(r.co, '.2f')} ppm",
+        f"主污染 {html.escape(r.pollutant or '-')}",
         "",
         f"時間 {r.publish_time.strftime('%Y-%m-%d %H:%M')}",
     ]
     await update.message.reply_html("\n".join(lines))
 
 
+def _parse_hours(args: list[str], default: int = 24, max_hours: int = 168) -> tuple[str, int]:
+    """從 args 取「測站名 + 可選時數」。最多 168h。"""
+    if not args:
+        return "", default
+    hours = default
+    site_args = list(args)
+    if len(args) >= 2:
+        last = args[-1]
+        try:
+            h = int(last)
+            if 1 <= h <= max_hours:
+                hours = h
+                site_args = args[:-1]
+        except ValueError:
+            pass
+    return " ".join(site_args).strip(), hours
+
+
 async def cmd_trend(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     db: Database = ctx.application.bot_data["db"]
     if not ctx.args:
-        await update.message.reply_text("用法：/trend <測站>，例如 /trend 沙鹿")
+        await update.message.reply_text(
+            "用法：/trend <測站> [hours]，例如 /trend 沙鹿 12"
+        )
         return
-    keyword = " ".join(ctx.args).strip()
-    cutoff = datetime.now() - timedelta(hours=24)
-    with db.session() as session:
-        rows = list(session.execute(
-            select(AQIRecord)
-            .where(AQIRecord.site_name == keyword, AQIRecord.publish_time >= cutoff)
-            .order_by(AQIRecord.publish_time.desc())
-            .limit(12)
-        ).scalars())
+    keyword, hours = _parse_hours(ctx.args)
+    if not keyword:
+        await update.message.reply_text("請提供測站名稱")
+        return
+    cutoff = datetime.now() - timedelta(hours=hours)
+
+    def _query() -> list[AQIRecord]:
+        with db.session() as session:
+            return list(session.execute(
+                select(AQIRecord)
+                .where(
+                    AQIRecord.site_name == keyword,
+                    AQIRecord.publish_time >= cutoff,
+                )
+                .order_by(AQIRecord.publish_time.asc())
+            ).scalars())
+
+    rows = await asyncio.to_thread(_query)
     if not rows:
-        await update.message.reply_text(f"找不到「{keyword}」的趨勢資料")
+        await update.message.reply_text(f"找不到「{keyword}」近 {hours}h 趨勢資料")
         return
-    rows.reverse()
-    lines = [f"<b>[{rows[0].region}][{keyword}] 近 24h 趨勢</b>", ""]
+    lines = [
+        f"<b>[{rows[0].region}][{html.escape(keyword)}] 近 {hours}h 趨勢</b>",
+        "",
+    ]
     for r in rows:
         flag, _ = aqi_flag(r.aqi)
         ts = r.publish_time.strftime("%m-%d %H:%M")
-        aqi = f"{r.aqi:.0f}" if r.aqi is not None else "—"
-        pm25 = f"{r.pm25:.1f}" if r.pm25 is not None else "—"
+        aqi = _fmt(r.aqi, ".0f")
+        pm25 = _fmt(r.pm25, ".1f")
         lines.append(f"{flag} {ts}　AQI {aqi}　PM2.5 {pm25}")
     await update.message.reply_html("\n".join(lines))
 
@@ -203,27 +245,32 @@ async def cmd_forecast(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     if not region:
         await update.message.reply_text("找不到該區，可用：" + "、".join(REGIONS))
         return
-    with db.session() as session:
-        rows = list(session.execute(
-            select(ForecastRecord)
-            .where(ForecastRecord.region == region)
-            .order_by(ForecastRecord.publish_time.desc())
-            .limit(3)
-        ).scalars())
+
+    def _query() -> list[ForecastRecord]:
+        with db.session() as session:
+            return list(session.execute(
+                select(ForecastRecord)
+                .where(ForecastRecord.region == region)
+                .order_by(ForecastRecord.publish_time.desc())
+                .limit(3)
+            ).scalars())
+
+    rows = await asyncio.to_thread(_query)
     if not rows:
         await update.message.reply_text(f"{region} 尚無預報資料")
         return
     lines = [f"<b>{region} 預報</b>", ""]
     for r in rows:
         lines.append(
-            f"📅 <b>{r.forecast_date}</b>　AQI {r.aqi or '—'}（{r.aqi_status or '-'}）"
+            f"📅 <b>{html.escape(r.forecast_date)}</b>　"
+            f"AQI {html.escape(r.aqi or '—')}（{html.escape(r.aqi_status or '-')}）"
         )
         if r.major_pollutant:
-            lines.append(f"  主：{r.major_pollutant}")
+            lines.append(f"  主：{html.escape(r.major_pollutant)}")
         if r.minor_pollutant:
-            lines.append(f"  次：{r.minor_pollutant}")
+            lines.append(f"  次：{html.escape(r.minor_pollutant)}")
         if r.content:
-            lines.append(f"  {r.content}")
+            lines.append(f"  {html.escape(r.content)}")
         lines.append("")
     await update.message.reply_html("\n".join(lines))
 
@@ -232,7 +279,19 @@ async def cmd_report(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     db: Database = ctx.application.bot_data["db"]
     notifier: TelegramNotifier = ctx.application.bot_data["notifier"]
     chat_id = str(update.effective_chat.id)
-    send_daily_report(db, notifier, chat_id=chat_id)
+    # 同步 send 包進 thread，避免阻塞 PTB event loop
+    ok = await asyncio.to_thread(send_daily_report, db, notifier, chat_id)
+    if not ok:
+        await update.message.reply_text("日報傳送失敗，請稍後再試")
+
+
+async def _on_error(update: object, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    logger.exception("Handler error", exc_info=ctx.error)
+    if isinstance(update, Update) and update.effective_message:
+        try:
+            await update.effective_message.reply_text("系統忙碌，請稍後再試。")
+        except Exception:
+            pass
 
 
 def build_app() -> Application:
@@ -257,6 +316,7 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("trend", cmd_trend))
     app.add_handler(CommandHandler("forecast", cmd_forecast))
     app.add_handler(CommandHandler("report", cmd_report))
+    app.add_error_handler(_on_error)
     return app
 
 

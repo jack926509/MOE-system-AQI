@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
 from datetime import datetime, timedelta
 
 from sqlalchemy import select
@@ -21,24 +22,29 @@ def build_daily_report(db: Database) -> str:
     lines: list[str] = ["📊 <b>8 區空品 24 小時日報</b>", ""]
 
     with db.session() as session:
-        for region in REGIONS:
-            rows = session.execute(
-                select(AQIRecord).where(
-                    AQIRecord.region == region,
-                    AQIRecord.publish_time >= cutoff,
-                )
-            ).scalars().all()
-            aqis = [r.aqi for r in rows if r.aqi is not None]
-            if not aqis:
-                lines.append(f"⚪ <b>{region}</b>　無資料")
-                continue
-            avg = sum(aqis) / len(aqis)
-            worst = max((r for r in rows if r.aqi is not None), key=lambda r: r.aqi or 0)
-            flag, _ = aqi_flag(avg)
-            lines.append(
-                f"{flag} <b>{region}</b>　均 AQI {avg:.0f}　"
-                f"最高 {worst.aqi:.0f} ({worst.site_name})"
-            )
+        rows = session.execute(
+            select(AQIRecord).where(AQIRecord.publish_time >= cutoff)
+        ).scalars().all()
+
+    by_region: dict[str, list[AQIRecord]] = defaultdict(list)
+    for r in rows:
+        by_region[r.region].append(r)
+
+    for region in REGIONS:
+        group = by_region.get(region, [])
+        aqis = [r.aqi for r in group if r.aqi is not None]
+        if not aqis:
+            lines.append(f"⚪ <b>{region}</b>　無資料")
+            continue
+        avg = sum(aqis) / len(aqis)
+        worst = max(
+            (r for r in group if r.aqi is not None), key=lambda r: r.aqi or 0
+        )
+        flag, _ = aqi_flag(avg)
+        lines.append(
+            f"{flag} <b>{region}</b>　均 AQI {avg:.0f}　"
+            f"最高 {worst.aqi:.0f} ({worst.site_name})"
+        )
 
     lines.append("")
     lines.append(f"產製時間：{datetime.now().strftime('%Y-%m-%d %H:%M')}")

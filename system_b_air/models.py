@@ -1,12 +1,16 @@
 """系統 B SQLAlchemy ORM。"""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import Float, Index, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from core.db import Base
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class AQIRecord(Base):
@@ -49,7 +53,7 @@ class AlertLog(Base):
     value: Mapped[float | None] = mapped_column(Float)
     threshold: Mapped[float | None] = mapped_column(Float)
     publish_time: Mapped[datetime] = mapped_column(index=True)
-    sent_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    sent_at: Mapped[datetime] = mapped_column(default=_utcnow)
 
     __table_args__ = (
         UniqueConstraint(
