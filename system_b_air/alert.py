@@ -37,6 +37,25 @@ _POLLUTANT_UNITS: dict[str, str] = {
     "co": "ppm",
 }
 
+# 主污染物中文 → 顯示用短碼（即時 ETL 回傳中文，UI 縮寫好讀）
+POLLUTANT_ABBR: dict[str, str] = {
+    "細懸浮微粒": "PM2.5",
+    "懸浮微粒": "PM10",
+    "臭氧": "O₃",
+    "臭氧八小時": "O₃",
+    "二氧化氮": "NO₂",
+    "二氧化硫": "SO₂",
+    "一氧化碳": "CO",
+}
+
+
+def pollutant_short(name: str | None) -> str:
+    """主污染物中文 → 短碼；查不到回原字串。空值回 '—'。"""
+    if not name:
+        return "—"
+    s = name.strip()
+    return POLLUTANT_ABBR.get(s, s)
+
 
 def aqi_flag(aqi: float | None) -> tuple[str, str]:
     if aqi is None:
@@ -45,6 +64,21 @@ def aqi_flag(aqi: float | None) -> tuple[str, str]:
         if aqi <= limit:
             return (flag, label)
     return ("🟤", "危害")
+
+
+def aqi_flag_from_str(value: str | None) -> tuple[str, str]:
+    """預報的 AQI 欄位是字串、可能是區間「100~150」；取較高端代表整體風險。"""
+    if not value:
+        return ("⚪", "無資料")
+    s = str(value).strip()
+    if not s:
+        return ("⚪", "無資料")
+    # 取字串內最後出現的數字當成上界
+    import re as _re
+    nums = _re.findall(r"\d+", s)
+    if not nums:
+        return ("⚪", "無資料")
+    return aqi_flag(float(nums[-1]))
 
 
 @dataclass

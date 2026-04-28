@@ -65,32 +65,45 @@ def build_daily_report(db: Database) -> str:
     stats.sort(key=lambda s: s.avg)
 
     yesterday = (now_taipei() - timedelta(days=1)).strftime("%Y-%m-%d")
+    total_n = sum(s.n for s in stats)
     lines: list[str] = [
         f"📊 <b>全台 24h 空品日報</b>",
-        f"<i>{yesterday} 數據彙整</i>",
+        f"<i>{yesterday} ‧ {total_n} 筆觀測</i>",
         "",
     ]
 
     if stats:
-        table = ["排 旗 區     均   高   最差站"]
+        # 「   」(3) 對應「排 旗 」前段
+        table = [
+            f"排    {pad('區', 6)} {pad('均', 3, 'right')} "
+            f"{pad('高', 3, 'right')}  {pad('最差站', 10)}",
+            "──    " + "─" * 6 + " " + "─" * 3 + " " + "─" * 3 + "  " + "─" * 10,
+        ]
         for i, s in enumerate(stats, 1):
             flag, _ = aqi_flag(s.avg)
             table.append(
                 f"{i:>2} {flag} {pad(s.region, 6)} "
                 f"{int(s.avg):>3} {int(s.peak):>3}  "
-                f"{truncate(s.peak_site, 8)}"
+                f"{pad(truncate(s.peak_site, 10), 10)}"
             )
         lines.append("<pre>" + "\n".join(html.escape(t) for t in table) + "</pre>")
 
         best = stats[0]
         worst = stats[-1]
+        best_flag, best_label = aqi_flag(best.avg)
+        worst_flag, worst_label = aqi_flag(worst.avg)
         lines.append("")
         lines.append(
-            f"🌟 <b>最佳</b>　{best.region}　均 AQI {best.avg:.0f}"
+            f"🌟 <b>最佳</b>　{best_flag} {best.region}　"
+            f"均 {best.avg:.0f}（{best_label}）"
         )
         lines.append(
-            f"⚠️ <b>最差</b>　{worst.region}　均 AQI {worst.avg:.0f}"
-            f"（{html.escape(worst.peak_site)} 高 {worst.peak:.0f}）"
+            f"⚠️ <b>最差</b>　{worst_flag} {worst.region}　"
+            f"均 {worst.avg:.0f}（{worst_label}）"
+        )
+        lines.append(
+            f"　　　　　最高站 {html.escape(worst.peak_site)} "
+            f"AQI {worst.peak:.0f}"
         )
 
     if no_data:
