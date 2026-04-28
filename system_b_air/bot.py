@@ -11,7 +11,7 @@ import logging
 from datetime import datetime, timedelta
 
 from sqlalchemy import select
-from telegram import Update
+from telegram import BotCommand, Update
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -404,6 +404,26 @@ async def _on_error(update: object, ctx: ContextTypes.DEFAULT_TYPE) -> None:
             pass
 
 
+BOT_COMMANDS: list[BotCommand] = [
+    BotCommand("now", "全台 8 區即時總覽"),
+    BotCommand("aqi", "區排行或單站詳情：/aqi <區或站>"),
+    BotCommand("trend", "近 N 小時走勢：/trend <站> [hours]"),
+    BotCommand("forecast", "區域 1–3 日預報：/forecast <區>"),
+    BotCommand("regions", "8 區與所屬縣市"),
+    BotCommand("report", "立即產 24h 空品日報"),
+    BotCommand("help", "顯示說明"),
+]
+
+
+async def _post_init(app: Application) -> None:
+    """Bot 啟動後向 Telegram 註冊命令清單，輸入 / 時會浮出選單。"""
+    try:
+        await app.bot.set_my_commands(BOT_COMMANDS)
+        logger.info("已向 Telegram 註冊 %d 個命令", len(BOT_COMMANDS))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("註冊命令清單失敗：%s", exc)
+
+
 def build_app() -> Application:
     settings = load_settings()
     if not settings.telegram.bot_token:
@@ -413,7 +433,12 @@ def build_app() -> Application:
 
     notifier = TelegramNotifier(settings.telegram.bot_token)
 
-    app = Application.builder().token(settings.telegram.bot_token).build()
+    app = (
+        Application.builder()
+        .token(settings.telegram.bot_token)
+        .post_init(_post_init)
+        .build()
+    )
     app.bot_data["db"] = db
     app.bot_data["notifier"] = notifier
     app.bot_data["settings"] = settings
