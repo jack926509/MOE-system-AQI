@@ -1,0 +1,78 @@
+# 系統 B（空品 Bot）設定範本。複製為 config/settings.yaml 後填值。
+# settings.yaml 已 gitignore，不會提交。
+
+moenv:
+  api_key: ${MOENV_API_KEY}      # 從 .env 注入；亦可直接寫死
+  base_url: https://data.moenv.gov.tw/api/v2
+  page_size: 1000
+  timeout: 30
+  max_retries: 3
+
+databases:
+  air_quality: data/air_quality.db
+
+telegram:
+  bot_token: ${TELEGRAM_BOT_TOKEN}
+  # 個人/單群組用：只要設這一個就好，daily/alert/admin 全部 fallback 到它
+  chat_id: ${TELEGRAM_CHAT_ID}
+  # 進階：要把日報、告警、admin 分流到不同群組時，個別覆寫；空值則沿用 chat_id
+  chat_ids:
+    daily: ${TELEGRAM_CHAT_ID_DAILY}
+    alert: ${TELEGRAM_CHAT_ID_ALERT}
+    admin: ${TELEGRAM_CHAT_ID_ADMIN}
+
+air_quality_alerts:
+  # 站層級：每站個別比對命中即發
+  # 單位對齊環境部 aqx_p_432：SO₂/NO₂/O₃ 為 ppb、CO 為 ppm、PM 為 μg/m³
+  station:
+    aqi: 150              # AQI（對敏感族群不健康）
+    pm25: 35.5            # μg/m³，PM2.5 24h 標準
+    so2: 75               # ppb，1 hr 標準
+    no2: 100              # ppb，1 hr 標準
+    co: 9                 # ppm，8 hr 標準
+    o3: 100               # ppb（8 hr 70；1 hr 寬鬆 100 才觸發）
+  # 區層級：同小時內某區 ≥ ratio 站超標時，發一則區域事件
+  region:
+    aqi: 150
+    ratio: 0.3            # 30%
+
+daily_report:
+  hour: 8
+  minute: 0
+  timezone: Asia/Taipei
+
+# 電廠周界站 watchlist：命中 → 告警訊息標註「⚠ 大潭周界」並推 admin
+# 站名須對齊環境部 aqx_p_432 SiteName；空 list 代表暫不監看
+# YAML 順序＝station_to_plant() 對應優先序，重疊站歸給更明確的母廠
+plants:
+  協和:
+    counties: [基隆市]
+    stations: [基隆, 萬里, 汐止]
+  林口:
+    counties: [新北市]
+    stations: [林口, 菜寮, 淡水]
+  大潭:
+    counties: [桃園市]
+    stations: [觀音, 大園, 桃園, 中壢, 龍潭]
+  通霄:
+    counties: [苗栗縣]
+    stations: [苗栗, 三義, 頭份]
+  台中:
+    counties: [臺中市, 彰化縣]
+    stations: [沙鹿, 西屯, 忠明, 大里, 線西, 彰化]
+  南部三廠:    # 興達／南部／大林合併監看（共用airshed）
+    counties: [高雄市]
+    stations: [左營, 楠梓, 仁武, 前鎮, 小港, 林園, 鳳山, 大寮]
+  尖山:
+    counties: [澎湖縣]
+    stations: [馬公]
+  塔山:
+    counties: [金門縣]
+    stations: [金門]
+  珠山:
+    counties: [連江縣]
+    stations: [馬祖]
+
+logging:
+  level: INFO
+  format: "%(asctime)s [%(levelname)s] %(name)s: %(message)s"

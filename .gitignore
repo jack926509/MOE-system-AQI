@@ -1,0 +1,10 @@
+.venv/
+.venv311/
+__pycache__/
+*.pyc
+.pytest_cache/
+data/
+config/settings.yaml
+.env
+*.db
+*.zip
