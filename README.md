@@ -1,6 +1,8 @@
 # 環境部空品 Telegram Bot（8 區）
 
 > 從環境部開放資料 API 取 88 站 AQI / 預報，每小時做站/區雙模告警，每日 08:00 推 8 區日報。
+>
+> 排程已對齊環境部官方公佈節奏：AQI 每小時 :15、預報每日 10:30 / 16:30 / 22:00、日報每日 08:00。
 
 ## 📂 目錄結構
 
@@ -9,7 +11,7 @@ MOE-system-AQI/
 ├── core/                   # 環境部 API client / DB / config / Telegram
 ├── system_b_air/           # 8 區 Bot：ETL、告警、日報、指令處理
 ├── scripts/                # init_db / verify_dataids / scheduler
-├── tests/                  # 22 個 unit tests（core 4 + system_b 18）
+├── tests/                  # 40 個 unit tests（core 11 + system_b 29）
 ├── config/settings.example.yaml
 ├── requirements.txt
 └── pyproject.toml
@@ -70,8 +72,8 @@ pytest tests/ -v
 | `/regions` | 列出 8 區 |
 | `/now` | 各區即時最差站 |
 | `/aqi <區或站>` | 指定區/站 AQI |
-| `/trend <站> [hours]` | 24h 趨勢（預設 24） |
-| `/forecast [區]` | 明日預報 |
+| `/trend <站> [hours]` | 近 N 小時趨勢（預設 24，上限 168） |
+| `/forecast <區>` | 該區明日預報 |
 | `/report` | 立即發 8 區日報 |
 
 ## 🔔 告警機制（雙模）
@@ -85,13 +87,17 @@ pytest tests/ -v
 
 ## 📡 排程（scripts/scheduler.py）
 
-| Job | Trigger |
-|---|---|
-| AQI ETL + 告警 | hourly :05 |
-| 預報 ETL | every 30 min |
-| 8 區日報 | daily 08:00 (Asia/Taipei) |
+時區一律 `Asia/Taipei`。對齊環境部官方資料節奏：
 
-啟動時呼叫 Telegram `getMe` 驗證 token，並對 admin chat 發一則啟動訊息。
+| Job | Trigger | 為什麼是這個時間 |
+|---|---|---|
+| AQI ETL + 告警 | hourly **`:15`** | `aqx_p_432` 每整點公佈 1 次，但 publishtime 上線常落在整點 +5～+15 分；`:15` 後抓最穩 |
+| 預報 ETL | **10:30 / 16:30 / 22:00** | `aqx_p_434` 每日 3 次正式發布的時點（每天只跑 3 次，比每 30 分省 87% API 用量） |
+| 8 區日報 | daily **08:00** | 早晨彙整前 24h |
+
+- 啟動時會呼叫 Telegram `getMe` 驗證 token，並對 admin chat 推一則「scheduler 已啟動」訊息。
+- 各 job 都包 `_safe()`，單次例外不會中止 scheduler。
+- `Settings` / `Database` / `TelegramNotifier` 在啟動時建立一次並重用。
 
 ## ⚠️ 前置工作
 
@@ -117,8 +123,18 @@ $ pytest tests/ -v
 ```
 
 涵蓋：
-- `core`：API client retry/分頁、Database 工廠、民國年/publishtime 解析
-- `system_b`：8 區 county→region 對應 + 臺台 normalize、ETL 寫入、雙模告警產生與去重
+- `core`：API client retry/分頁、Database 工廠、民國年/publishtime 解析、Telegram 訊息切分
+- `system_b`：8 區 county→region 對應 + 臺台 normalize、ETL 寫入、雙模告警產生與 batch 去重、Bot helpers（`_fmt`、`_parse_hours`）
+
+## ⚙️ 主要優化重點
+
+- **Notifier**：4096 字訊息自動依換行切分；5xx / 連線錯誤指數退避；Telegram 429 依 `retry_after` 等待
+- **Alert dedup**：原本「N 次 commit + 抓 IntegrityError」改為「單次 SELECT + bulk INSERT」，N+1 round-trip → 2 次
+- **Daily report**：8 區改成單次 query + in-memory groupby（少 7 次 round-trip）
+- **Bot**：所有 DB 與 `send_daily_report` 透過 `asyncio.to_thread` 不阻塞 event loop；HTML escape；保留 0 值（不再被誤顯示為 —）
+- **ETL**：批次 INSERT 切 chunk(500) 避開 SQLite 變數上限
+- **Scheduler**：例外保護 `_safe()` + 啟動時一次 load settings 重用
+- **Telegram getMe**：scheduler 啟動時驗證 token 並推啟動訊息
 
 ## 部署於 Zeabur
 
