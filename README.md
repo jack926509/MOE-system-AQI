@@ -112,9 +112,21 @@ python scripts/verify_dataids.py
 確認 `aqx_p_432`（即時）、`aqx_p_434`（預報）。如不正確至 [Swagger](https://data.moenv.gov.tw/swagger/) 查正確 ID 後改 `core/api_client.py` 的 `Datasets`。
 
 ### 3. 建立 Telegram Bot
-- 對 `@BotFather` 發 `/newbot` 取得 Token
-- 加入「空品日報」「空品告警」群組，從 `getUpdates` 取得 chat_id
-- 填入 `.env` 的 `TELEGRAM_BOT_TOKEN` 與 `TELEGRAM_CHAT_ID_*`
+- 對 `@BotFather` 發 `/newbot` 取得 Token → 填到 `.env` 的 `TELEGRAM_BOT_TOKEN`
+- 取得 chat_id：
+  - 個人：對 `@userinfobot` 發訊息會回你的 id
+  - 群組：把 bot 拉進群、發一則訊息，開 `https://api.telegram.org/bot<TOKEN>/getUpdates` 找 `chat.id`（群組為負數）
+- 填到 `.env` 的 `TELEGRAM_CHAT_ID`
+
+最小 `.env` 範例（個人 / 單群組用）：
+```env
+MOENV_API_KEY=你的環境部key
+TELEGRAM_BOT_TOKEN=12345:AA...
+TELEGRAM_CHAT_ID=123456789
+TZ=Asia/Taipei
+```
+
+> 進階：若想把日報、告警、admin 分流到 3 個不同群組，可額外設 `TELEGRAM_CHAT_ID_DAILY` / `TELEGRAM_CHAT_ID_ALERT` / `TELEGRAM_CHAT_ID_ADMIN`，未設的會自動 fallback 到 `TELEGRAM_CHAT_ID`。
 
 ## 🧪 測試
 

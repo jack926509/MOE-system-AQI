@@ -17,6 +17,17 @@ DEFAULT_PATH = "config/settings.yaml"
 EXAMPLE_PATH = "config/settings.example.yaml"
 
 _ENV_PATTERN = re.compile(r"\$\{([A-Z0-9_]+)\}")
+_UNEXPANDED = re.compile(r"^\s*\$\{[A-Z0-9_]+\}\s*$")
+
+
+def _is_unset(v: Any) -> bool:
+    """空字串 / None / 仍是 ${VAR} 樣式（環境變數沒設）視為未設定。"""
+    if v is None:
+        return True
+    if isinstance(v, str):
+        s = v.strip()
+        return not s or bool(_UNEXPANDED.match(s))
+    return False
 
 
 def _expand_env(value: Any) -> Any:
@@ -45,6 +56,7 @@ class MoEnvSettings:
 class TelegramSettings:
     bot_token: str = ""
     chat_ids: dict[str, str] = field(default_factory=dict)
+    default_chat_id: str = ""  # 個人用：daily/alert/admin 沒填時 fallback
 
 
 @dataclass
@@ -89,9 +101,29 @@ def _build_settings(raw: dict[str, Any]) -> Settings:
     moenv = MoEnvSettings(**(raw.get("moenv") or {}))
     databases = raw.get("databases") or {}
     tg_raw = raw.get("telegram") or {}
+
+    bot_token_raw = tg_raw.get("bot_token", "")
+    bot_token = "" if _is_unset(bot_token_raw) else str(bot_token_raw).strip()
+
+    default_chat_raw = tg_raw.get("chat_id", "")
+    default_chat_id = (
+        "" if _is_unset(default_chat_raw) else str(default_chat_raw).strip()
+    )
+
+    chat_ids: dict[str, str] = {}
+    for k, v in (tg_raw.get("chat_ids") or {}).items():
+        if not _is_unset(v):
+            chat_ids[k] = str(v).strip()
+
+    # fallback：若 daily/alert/admin 任一未設且有 default_chat_id，自動補上
+    if default_chat_id:
+        for target in ("daily", "alert", "admin"):
+            chat_ids.setdefault(target, default_chat_id)
+
     telegram = TelegramSettings(
-        bot_token=tg_raw.get("bot_token", ""),
-        chat_ids={k: str(v) for k, v in (tg_raw.get("chat_ids") or {}).items() if v},
+        bot_token=bot_token,
+        chat_ids=chat_ids,
+        default_chat_id=default_chat_id,
     )
     aq_raw = raw.get("air_quality_alerts") or {}
     air_alerts = AirQualityAlertSettings(
