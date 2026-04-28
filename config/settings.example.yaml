@@ -13,6 +13,9 @@ databases:
 
 telegram:
   bot_token: ${TELEGRAM_BOT_TOKEN}
+  # 個人/單群組用：只要設這一個就好，daily/alert/admin 全部 fallback 到它
+  chat_id: ${TELEGRAM_CHAT_ID}
+  # 進階：要把日報、告警、admin 分流到不同群組時，個別覆寫；空值則沿用 chat_id
   chat_ids:
     daily: ${TELEGRAM_CHAT_ID_DAILY}
     alert: ${TELEGRAM_CHAT_ID_ALERT}

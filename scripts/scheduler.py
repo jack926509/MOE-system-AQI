@@ -5,6 +5,7 @@ import logging
 from datetime import datetime
 
 from apscheduler.schedulers.blocking import BlockingScheduler
+from apscheduler.triggers.combining import OrTrigger
 from apscheduler.triggers.cron import CronTrigger
 
 from core import load_settings
@@ -85,15 +86,34 @@ def main() -> None:
 
     job_aqi, job_fc, job_daily = make_jobs(settings, db, notifier)
 
-    sched = BlockingScheduler(timezone=settings.daily_report.timezone)
-    sched.add_job(job_aqi, CronTrigger(minute=5), id="aqi_etl_alert")
-    sched.add_job(job_fc, CronTrigger(minute="*/30"), id="forecast_etl")
+    tz = settings.daily_report.timezone
+    sched = BlockingScheduler(timezone=tz)
+
+    # AQI 即時 + 告警：每整點 :15（讓官方完成 publish 後再抓）
+    sched.add_job(
+        job_aqi, CronTrigger(minute=15, timezone=tz), id="aqi_etl_alert"
+    )
+
+    # 預報：對齊官方每日 3 次正式發布時點（10:30 / 16:30 / 22:00）
+    sched.add_job(
+        job_fc,
+        OrTrigger(
+            [
+                CronTrigger(hour=10, minute=30, timezone=tz),
+                CronTrigger(hour=16, minute=30, timezone=tz),
+                CronTrigger(hour=22, minute=0, timezone=tz),
+            ]
+        ),
+        id="forecast_etl",
+    )
+
+    # 8 區日報：每日 08:00
     sched.add_job(
         job_daily,
         CronTrigger(
             hour=settings.daily_report.hour,
             minute=settings.daily_report.minute,
-            timezone=settings.daily_report.timezone,
+            timezone=tz,
         ),
         id="daily_report",
     )
