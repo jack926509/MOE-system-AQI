@@ -1,8 +1,10 @@
 """每日 8 區 AQI 日報。"""
 from __future__ import annotations
 
+import html
 import logging
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from sqlalchemy import select
@@ -10,16 +12,25 @@ from sqlalchemy import select
 from core.db import Database
 from core.notifier import TelegramNotifier
 from system_b_air.alert import aqi_flag
+from system_b_air.formatting import pad, truncate
 from system_b_air.models import AQIRecord
 from system_b_air.regions import REGIONS
 
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class _RegionStat:
+    region: str
+    avg: float
+    peak: float
+    peak_site: str
+    n: int
+
+
 def build_daily_report(db: Database) -> str:
     """聚合 24 小時內每區的平均 AQI、最大 AQI 與最差站。"""
     cutoff = datetime.now() - timedelta(hours=24)
-    lines: list[str] = ["📊 <b>8 區空品 24 小時日報</b>", ""]
 
     with db.session() as session:
         rows = session.execute(
@@ -30,24 +41,63 @@ def build_daily_report(db: Database) -> str:
     for r in rows:
         by_region[r.region].append(r)
 
+    stats: list[_RegionStat] = []
+    no_data: list[str] = []
     for region in REGIONS:
         group = by_region.get(region, [])
         aqis = [r.aqi for r in group if r.aqi is not None]
         if not aqis:
-            lines.append(f"⚪ <b>{region}</b>　無資料")
+            no_data.append(region)
             continue
-        avg = sum(aqis) / len(aqis)
         worst = max(
             (r for r in group if r.aqi is not None), key=lambda r: r.aqi or 0
         )
-        flag, _ = aqi_flag(avg)
+        stats.append(_RegionStat(
+            region=region,
+            avg=sum(aqis) / len(aqis),
+            peak=worst.aqi or 0.0,
+            peak_site=worst.site_name,
+            n=len(aqis),
+        ))
+
+    # 依平均 AQI 由低到高排序（越前面空品越好）
+    stats.sort(key=lambda s: s.avg)
+
+    yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+    lines: list[str] = [
+        f"📊 <b>全台 24h 空品日報</b>",
+        f"<i>{yesterday} 數據彙整</i>",
+        "",
+    ]
+
+    if stats:
+        table = ["排 旗 區     均   高   最差站"]
+        for i, s in enumerate(stats, 1):
+            flag, _ = aqi_flag(s.avg)
+            table.append(
+                f"{i:>2} {flag} {pad(s.region, 6)} "
+                f"{int(s.avg):>3} {int(s.peak):>3}  "
+                f"{truncate(s.peak_site, 8)}"
+            )
+        lines.append("<pre>" + "\n".join(html.escape(t) for t in table) + "</pre>")
+
+        best = stats[0]
+        worst = stats[-1]
+        lines.append("")
         lines.append(
-            f"{flag} <b>{region}</b>　均 AQI {avg:.0f}　"
-            f"最高 {worst.aqi:.0f} ({worst.site_name})"
+            f"🌟 <b>最佳</b>　{best.region}　均 AQI {best.avg:.0f}"
+        )
+        lines.append(
+            f"⚠️ <b>最差</b>　{worst.region}　均 AQI {worst.avg:.0f}"
+            f"（{html.escape(worst.peak_site)} 高 {worst.peak:.0f}）"
         )
 
+    if no_data:
+        lines.append("")
+        lines.append(f"⚪ 無資料：{ '、'.join(no_data) }")
+
     lines.append("")
-    lines.append(f"產製時間：{datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    lines.append(f"🕐 產製 {datetime.now().strftime('%Y-%m-%d %H:%M')}")
     return "\n".join(lines)
 
 

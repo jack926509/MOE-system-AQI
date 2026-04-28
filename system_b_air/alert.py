@@ -59,25 +59,48 @@ class AlertEvent:
     site_name: str | None = None
 
     def to_message(self) -> str:
-        head = f"[{self.region}]"
-        if self.scope == "station" and self.site_name:
-            head += f"[{self.site_name}]"
+        import html as _html
         ts = self.publish_time.strftime("%Y-%m-%d %H:%M")
+        loc = (
+            f"{_html.escape(self.region)} ‧ {_html.escape(self.site_name)}"
+            if self.scope == "station" and self.site_name
+            else f"{_html.escape(self.region)}（區域）"
+        )
+
         if self.pollutant == "aqi":
             flag, label = aqi_flag(self.value)
-            scope_label = "區域空品警示" if self.scope == "region" else "空氣品質警示"
-            return (
-                f"{flag} <b>{head} {scope_label}</b>\n"
-                f"AQI = <b>{self.value:.0f}</b> ({label})，閾值 {self.threshold:.0f}\n"
-                f"時間 {ts}"
-            )
+            title = "空品惡化（區域）" if self.scope == "region" else "空品惡化"
+            lines = [
+                f"{flag} <b>{title}</b>",
+                f"📍 {loc}",
+                f"AQI <b>{self.value:.0f}</b>　{label}",
+                f"閾值 {self.threshold:.0f}",
+                f"🕐 {ts}",
+            ]
+            if self.scope == "station" and self.site_name:
+                lines.append(
+                    f"\n<i>📈 走勢 → /trend {_html.escape(self.site_name)}</i>"
+                )
+            else:
+                lines.append(
+                    f"\n<i>🗺️ 區內細節 → /aqi {_html.escape(self.region)}</i>"
+                )
+            return "\n".join(lines)
+
         unit = _POLLUTANT_UNITS.get(self.pollutant, "")
-        return (
-            f"⚠️ <b>{head} {self.pollutant.upper()} 超標</b>\n"
-            f"{self.pollutant.upper()} = <b>{self.value:.2f}</b> {unit}，"
-            f"閾值 {self.threshold:.2f} {unit}\n"
-            f"時間 {ts}"
-        )
+        name = self.pollutant.upper()
+        lines = [
+            f"⚠️ <b>{name} 超標</b>",
+            f"📍 {loc}",
+            f"{name} <b>{self.value:.2f}</b> {unit}",
+            f"閾值 {self.threshold:.2f} {unit}",
+            f"🕐 {ts}",
+        ]
+        if self.scope == "station" and self.site_name:
+            lines.append(
+                f"\n<i>📈 走勢 → /trend {_html.escape(self.site_name)}</i>"
+            )
+        return "\n".join(lines)
 
 
 def _check_station(
