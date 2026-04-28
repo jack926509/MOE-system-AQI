@@ -31,6 +31,7 @@ def main() -> int:
         base_url=settings.moenv.base_url,
         page_size=1,
         timeout=settings.moenv.timeout,
+        max_retries=settings.moenv.max_retries,
     )
     failures: list[str] = []
     with client:
@@ -42,7 +43,9 @@ def main() -> int:
                 print(f"  ✗ 失敗：{e}")
                 failures.append(dataset_id)
                 continue
+            total = payload.get("total")
             records = payload.get("records") or []
+            print(f"  total={total} returned={len(records)}")
             if not records:
                 print("  ⚠ 回傳 0 筆，DataID 可能存在但無資料；fields 不可得")
                 failures.append(dataset_id)

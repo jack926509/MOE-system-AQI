@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import html
 import logging
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from sqlalchemy import select
 from telegram import BotCommand, Update
@@ -21,6 +21,7 @@ from telegram.ext import (
 from core import load_settings
 from core.db import Database
 from core.notifier import TelegramNotifier
+from core.time_utils import now_taipei
 from system_b_air.alert import aqi_flag
 from system_b_air.daily_report import send_daily_report
 from system_b_air.formatting import (
@@ -113,7 +114,12 @@ async def cmd_now(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     db: Database = ctx.application.bot_data["db"]
     rows = await asyncio.to_thread(_latest_records, db)
     if not rows:
-        await update.message.reply_text("尚無資料，請等下一輪 ETL")
+        await update.message.reply_text(
+            "尚無資料。請確認：\n"
+            "1) 已設定 MOENV_API_KEY 並通過 verify_dataids.py\n"
+            "2) scheduler.py 已啟動並至少跑過一次 ETL\n"
+            "3) 可手動執行：python -m system_b_air.etl_realtime"
+        )
         return
     by_region: dict[str, list[AQIRecord]] = {r: [] for r in REGIONS}
     for r in rows:
@@ -265,7 +271,7 @@ async def cmd_trend(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     if not keyword:
         await update.message.reply_text("請提供測站名稱")
         return
-    cutoff = datetime.now() - timedelta(hours=hours)
+    cutoff = now_taipei() - timedelta(hours=hours)
 
     def _query() -> list[AQIRecord]:
         with db.session() as session:

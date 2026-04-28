@@ -180,13 +180,19 @@ def _persist_dedup(
 
     with db.session() as session:
         keys = {(e.scope, e.target, e.pollutant, e.publish_time) for e in events}
+        # 限縮在這批事件可能撞到的時間 / 範圍，避免全表掃描
+        publish_times = {k[3] for k in keys}
+        targets = {k[1] for k in keys}
         existing_rows = session.execute(
             select(
                 AlertLog.scope,
                 AlertLog.target,
                 AlertLog.pollutant,
                 AlertLog.publish_time,
-            ).where(AlertLog.scope.in_({k[0] for k in keys}))
+            ).where(
+                AlertLog.publish_time.in_(publish_times),
+                AlertLog.target.in_(targets),
+            )
         ).all()
         existing = {tuple(row) for row in existing_rows}
 

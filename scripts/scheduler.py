@@ -2,13 +2,12 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
 
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.combining import OrTrigger
 from apscheduler.triggers.cron import CronTrigger
 
-from core import load_settings
+from core import load_settings, now_taipei
 from core.config import Settings
 from core.db import Database
 from core.notifier import TelegramNotifier
@@ -66,6 +65,11 @@ def make_jobs(settings: Settings, db: Database, notifier: TelegramNotifier | Non
 
 def main() -> None:
     settings = load_settings()
+    if not settings.moenv.api_key:
+        raise SystemExit(
+            "MoEnv API key 未設定（請填 .env MOENV_API_KEY 或 settings.moenv.api_key），無法啟動 scheduler"
+        )
+
     db = Database(settings.databases.get("air_quality", "data/air_quality.db"))
     db.create_all()
 
@@ -78,13 +82,20 @@ def main() -> None:
             admin = settings.telegram.chat_ids.get("admin")
             if admin:
                 notifier.send_message(
-                    f"✓ AQI 排程 scheduler 已啟動 @ {datetime.now():%Y-%m-%d %H:%M}",
+                    f"✓ AQI 排程 scheduler 已啟動 @ {now_taipei():%Y-%m-%d %H:%M}",
                     chat_id=admin,
                 )
         except Exception as e:
             logger.error("Telegram 啟動驗證失敗：%s", e)
+    else:
+        logger.warning("未設定 telegram.bot_token，告警與日報只會寫入 DB / log")
 
     job_aqi, job_fc, job_daily = make_jobs(settings, db, notifier)
+
+    # 啟動時先跑一次 ETL，避免新部署到下一個 :15 之間整段沒資料
+    logger.info("初始化：立即執行一次 AQI / 預報 ETL")
+    job_aqi()
+    job_fc()
 
     tz = settings.daily_report.timezone
     sched = BlockingScheduler(timezone=tz)

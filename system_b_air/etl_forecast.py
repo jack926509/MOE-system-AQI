@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from collections import Counter
 from typing import Any
 
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -16,34 +17,60 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(mes
 logger = logging.getLogger(__name__)
 
 
-def _to_row(rec: dict[str, Any]) -> dict[str, Any] | None:
-    raw_area = rec.get("area") or rec.get("region") or ""
-    region = raw_area.strip()
+def _ci_get(rec: dict[str, Any], *keys: str) -> Any:
+    lower = {k.lower(): v for k, v in rec.items()}
+    for k in keys:
+        v = lower.get(k.lower())
+        if v not in (None, ""):
+            return v
+    return None
+
+
+def _classify(rec: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
+    raw_area = _ci_get(rec, "area", "region") or ""
+    region = str(raw_area).strip().replace("台", "臺")
     if region not in REGIONS:
-        # 嘗試別名
         alias = region_alias(region)
         if alias is None:
-            return None
+            return None, f"unknown_area:{region or 'empty'}"
         region = alias
-    forecast_date = (rec.get("forecastdate") or rec.get("forecast_date") or "").strip()
-    publish = parse_publishtime(rec.get("publishtime") or rec.get("publish_time"))
-    if not forecast_date or publish is None:
-        return None
 
-    return {
+    forecast_date = (str(_ci_get(rec, "forecastdate", "forecast_date") or "").strip())
+    if not forecast_date:
+        return None, "no_forecast_date"
+
+    publish = parse_publishtime(_ci_get(rec, "publishtime", "publish_time"))
+    if publish is None:
+        return None, "bad_publishtime"
+
+    row = {
         "region": region,
         "forecast_date": forecast_date,
         "publish_time": publish,
-        "aqi": (rec.get("aqi") or "").strip() or None,
-        "aqi_status": (rec.get("aqi_status") or rec.get("status") or "").strip() or None,
-        "minor_pollutant": (rec.get("minorpollutant") or rec.get("minor_pollutant") or "").strip() or None,
-        "major_pollutant": (rec.get("majorpollutant") or rec.get("major_pollutant") or "").strip() or None,
-        "content": (rec.get("content") or "").strip() or None,
+        "aqi": (str(_ci_get(rec, "aqi") or "").strip() or None),
+        "aqi_status": (str(_ci_get(rec, "aqi_status", "status") or "").strip() or None),
+        "minor_pollutant": (
+            str(_ci_get(rec, "minorpollutant", "minor_pollutant") or "").strip() or None
+        ),
+        "major_pollutant": (
+            str(_ci_get(rec, "majorpollutant", "major_pollutant") or "").strip() or None
+        ),
+        "content": (str(_ci_get(rec, "content") or "").strip() or None),
     }
+    return row, None
+
+
+def _to_row(rec: dict[str, Any]) -> dict[str, Any] | None:
+    row, _ = _classify(rec)
+    return row
 
 
 def run_etl() -> int:
     settings = load_settings()
+    if not settings.moenv.api_key:
+        logger.error("MoEnv API key 未設定，中止 forecast ETL")
+        return 0
+
     db = Database(settings.databases.get("air_quality", "data/air_quality.db"))
     db.create_all()
 
@@ -51,11 +78,21 @@ def run_etl() -> int:
         api_key=settings.moenv.api_key,
         base_url=settings.moenv.base_url,
         page_size=settings.moenv.page_size,
+        timeout=settings.moenv.timeout,
+        max_retries=settings.moenv.max_retries,
     )
+    skip_reasons: Counter[str] = Counter()
     with client:
         records = client.fetch_all(Datasets.AQI_FORECAST)
 
-    rows = [r for r in (_to_row(rec) for rec in records) if r]
+    rows: list[dict[str, Any]] = []
+    for rec in records:
+        row, reason = _classify(rec)
+        if row is None:
+            skip_reasons[reason or "unknown"] += 1
+            continue
+        rows.append(row)
+
     inserted = 0
     if rows:
         chunk_size = 500
@@ -71,6 +108,8 @@ def run_etl() -> int:
                     inserted += rc
             session.commit()
 
+    if skip_reasons:
+        logger.warning("Forecast skipped: %s", dict(skip_reasons))
     logger.info(
         "Forecast ETL: fetched=%d valid=%d inserted=%d",
         len(records), len(rows), inserted,

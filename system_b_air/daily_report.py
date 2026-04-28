@@ -5,12 +5,13 @@ import html
 import logging
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from sqlalchemy import select
 
 from core.db import Database
 from core.notifier import TelegramNotifier
+from core.time_utils import now_taipei
 from system_b_air.alert import aqi_flag
 from system_b_air.formatting import pad, truncate
 from system_b_air.models import AQIRecord
@@ -30,7 +31,7 @@ class _RegionStat:
 
 def build_daily_report(db: Database) -> str:
     """聚合 24 小時內每區的平均 AQI、最大 AQI 與最差站。"""
-    cutoff = datetime.now() - timedelta(hours=24)
+    cutoff = now_taipei() - timedelta(hours=24)
 
     with db.session() as session:
         rows = session.execute(
@@ -63,7 +64,7 @@ def build_daily_report(db: Database) -> str:
     # 依平均 AQI 由低到高排序（越前面空品越好）
     stats.sort(key=lambda s: s.avg)
 
-    yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+    yesterday = (now_taipei() - timedelta(days=1)).strftime("%Y-%m-%d")
     lines: list[str] = [
         f"📊 <b>全台 24h 空品日報</b>",
         f"<i>{yesterday} 數據彙整</i>",
@@ -97,7 +98,7 @@ def build_daily_report(db: Database) -> str:
         lines.append(f"⚪ 無資料：{ '、'.join(no_data) }")
 
     lines.append("")
-    lines.append(f"🕐 產製 {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    lines.append(f"🕐 產製 {now_taipei().strftime('%Y-%m-%d %H:%M')}")
     return "\n".join(lines)
 
 

@@ -5,6 +5,17 @@ import re
 from datetime import datetime, timezone
 from typing import Optional
 
+try:
+    from zoneinfo import ZoneInfo
+    TAIPEI_TZ = ZoneInfo("Asia/Taipei")
+except Exception:  # pragma: no cover - fallback if tzdata 缺失
+    TAIPEI_TZ = timezone.utc
+
+
+def now_taipei() -> datetime:
+    """回傳台北當地時間（naive；與 DB 內 publishtime 同基準便於比較）。"""
+    return datetime.now(TAIPEI_TZ).replace(tzinfo=None)
+
 # 常見格式
 _FMT_CANDIDATES = (
     "%Y-%m-%d %H:%M",

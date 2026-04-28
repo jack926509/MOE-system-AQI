@@ -101,14 +101,25 @@ class TelegramNotifier:
                     )
                     time.sleep(min(2 ** attempt, 8))
                     continue
+                if 400 <= resp.status_code < 500:
+                    # 400/401/403：通常為 chat_id 錯、bot 被踢、parse_mode 錯，重試無益
+                    body_preview = resp.text[:200].replace("\n", " ")
+                    logger.error(
+                        "Telegram %s %s (no retry): %s",
+                        path, resp.status_code, body_preview,
+                    )
+                    return False
                 resp.raise_for_status()
                 return True
-            except httpx.HTTPError as e:
-                logger.warning("Telegram %s err: %s (attempt %d)", path, e, attempt)
+            except (httpx.TimeoutException, httpx.TransportError) as e:
+                logger.warning("Telegram %s net err: %s (attempt %d)", path, e, attempt)
                 if attempt == self.max_retries:
                     logger.error("Telegram %s give up after %d attempts", path, attempt)
                     return False
                 time.sleep(min(2 ** attempt, 8))
+            except httpx.HTTPError as e:
+                logger.error("Telegram %s err (no retry): %s", path, e)
+                return False
         return False
 
     def send_message(
