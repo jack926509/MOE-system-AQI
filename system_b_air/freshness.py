@@ -108,7 +108,7 @@ def run_freshness(
         lines = [f"📡 <b>測站資料失聯</b>　<i>≥ {stale_hours}h 無新值</i>", ""]
         for site, last_pub in new_items:
             ts = last_pub.strftime("%Y-%m-%d %H:%M") if last_pub else "—（從未觀測）"
-            lines.append(f"⚠ {html.escape(site)}　最後 {ts}")
+            lines.append(f"⚠️ {html.escape(site)}　最後 {ts}")
         notifier.send_message("\n".join(lines), chat_id=admin_chat_id)
     logger.info("Freshness: %d sites stale, %d newly notified", len(stale), len(new_items))
     return len(new_items)

@@ -136,12 +136,23 @@ async def cmd_now(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     db: Database = ctx.application.bot_data["db"]
     rows = await asyncio.to_thread(_latest_records, db)
     if not rows:
-        await update.message.reply_text(
-            "尚無資料。請確認：\n"
-            "1) 已設定 MOENV_API_KEY 並通過 verify_dataids.py\n"
-            "2) scheduler.py 已啟動並至少跑過一次 ETL\n"
-            "3) 可手動執行：python -m system_b_air.etl_realtime"
+        settings = ctx.application.bot_data.get("settings")
+        admin_id = (
+            settings.telegram.chat_ids.get("admin") if settings else None
         )
+        is_admin = (
+            admin_id is not None
+            and str(update.effective_chat.id) == str(admin_id)
+        )
+        if is_admin:
+            await update.message.reply_text(
+                "目前資料庫尚無觀測值，請檢查：\n"
+                "• 環境變數 MOENV_API_KEY 是否設定\n"
+                "• scheduler 是否啟動且跑過 ETL\n"
+                "• Zeabur logs 有無 ETL 錯誤訊息"
+            )
+        else:
+            await update.message.reply_text("目前資料庫尚無觀測值，請稍後再試。")
         return
     by_region: dict[str, list[AQIRecord]] = {r: [] for r in REGIONS}
     for r in rows:

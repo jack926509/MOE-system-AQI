@@ -111,7 +111,7 @@ class AlertEvent:
                 f"{flag} <b>{title}</b>",
                 f"{plant_tag}📍 {loc}".strip(),
                 f"AQI <b>{self.value:.0f}</b>　{label}",
-                f"閾值 {self.threshold:.0f}",
+                f"警戒值 {self.threshold:.0f}",
                 f"🕐 {ts}",
             ]
             if self.scope == "station" and self.site_name:
@@ -140,7 +140,7 @@ class AlertEvent:
             f"⚠️ <b>{name} 超標</b>",
             f"{plant_tag}📍 {loc}".strip(),
             f"{name} <b>{val_fmt}</b> {unit}",
-            f"閾值 {th_fmt} {unit}",
+            f"警戒值 {th_fmt} {unit}",
             f"🕐 {ts}",
         ]
         if self.scope == "station" and self.site_name:
