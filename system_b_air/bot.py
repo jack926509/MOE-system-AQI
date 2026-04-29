@@ -58,6 +58,12 @@ HELP_TEXT = (
     "<i>例：/aqi 中部　/trend 沙鹿 12　/forecast 北部</i>"
 )
 
+START_GREETING = (
+    "🌬️ 歡迎使用<b>環境部空品 Bot</b>。\n"
+    "我會即時監看全台 8 區空品，並在 AQI、PM2.5、SO₂ 等指標"
+    "達警戒值時主動告警。\n\n"
+)
+
 
 def _latest_records(db: Database) -> list[AQIRecord]:
     """單次 query：取最新 publish_time 的所有站點。"""
@@ -80,7 +86,7 @@ def _hint(*lines: str) -> str:
 # ───── handlers ─────
 
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_html(HELP_TEXT)
+    await update.message.reply_html(START_GREETING + HELP_TEXT)
 
 
 async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -232,7 +238,7 @@ async def cmd_aqi(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     db: Database = ctx.application.bot_data["db"]
     if not ctx.args:
         await update.message.reply_text(
-            "用法：/aqi <區或測站>\n例如 /aqi 中部 或 /aqi 沙鹿"
+            "用法：/aqi <區或測站>\n例如 /aqi 中部 或 /aqi 沙鹿。"
         )
         return
     keyword = " ".join(ctx.args).strip()
@@ -288,7 +294,7 @@ async def cmd_aqi(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         target = [r for r in rows if keyword in r.site_name]
     if not target:
         await update.message.reply_text(
-            f"找不到測站「{keyword}」\n試試 /now 或 /regions"
+            f"找不到測站「{keyword}」。\n試試 /now 或 /regions。"
         )
         return
 
@@ -297,7 +303,8 @@ async def cmd_aqi(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if len(target) > 5:
             sample = "、".join(html.escape(r.site_name) for r in target[:5])
             await update.message.reply_text(
-                f"「{keyword}」匹配 {len(target)} 站，請縮小查詢\n例如：{sample} …"
+                f"「{keyword}」匹配 {len(target)} 站，請輸入更完整的站名。\n"
+                f"例如：{sample} …"
             )
             return
         lines = [f"🔎 <b>「{html.escape(keyword)}」匹配 {len(target)} 站</b>", ""]
@@ -368,13 +375,30 @@ async def cmd_trend(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     db: Database = ctx.application.bot_data["db"]
     if not ctx.args:
         await update.message.reply_text(
-            "用法：/trend <測站> [hours]\n例如 /trend 沙鹿 12"
+            "用法：/trend <測站> [hours]\n例如 /trend 沙鹿 12。"
         )
         return
-    keyword, hours = _parse_hours(ctx.args)
+
+    # 末位若為超範圍整數，先夾擊到 1–168 再交給 _parse_hours
+    args = list(ctx.args)
+    clamped: int | None = None
+    if len(args) >= 2:
+        try:
+            requested = int(args[-1])
+        except ValueError:
+            requested = None
+        if requested is not None and not (1 <= requested <= 168):
+            clamped = max(1, min(168, requested))
+            args[-1] = str(clamped)
+
+    keyword, hours = _parse_hours(args)
     if not keyword:
-        await update.message.reply_text("請提供測站名稱")
+        await update.message.reply_text("請提供測站名稱。")
         return
+    if clamped is not None:
+        await update.message.reply_text(
+            f"查詢區間限定 1–168 小時（最多 7 天），已套用 {clamped}h。"
+        )
     cutoff = now_taipei() - timedelta(hours=hours)
 
     def _query() -> list[AQIRecord]:
@@ -475,7 +499,7 @@ async def cmd_forecast(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     db: Database = ctx.application.bot_data["db"]
     if not ctx.args:
         await update.message.reply_text(
-            "用法：/forecast <區>\n例如 /forecast 北部"
+            "用法：/forecast <區>\n例如 /forecast 北部。"
         )
         return
     region = region_alias(" ".join(ctx.args).strip())
@@ -542,7 +566,7 @@ async def cmd_forecast(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         f"🌤️ <b>{html.escape(region)} 空品預報</b>\n"
         f"<i>發布 {publish_at}</i>\n"
         f"\n"
-        + "\n────────────\n".join(blocks)
+        + "\n\n".join(blocks)
     )
     await update.message.reply_html(msg)
 
@@ -553,7 +577,7 @@ async def cmd_report(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = str(update.effective_chat.id)
     ok = await asyncio.to_thread(send_daily_report, db, notifier, chat_id)
     if not ok:
-        await update.message.reply_text("日報傳送失敗，請稍後再試")
+        await update.message.reply_text("日報傳送失敗，請稍後再試。")
 
 
 async def _on_error(update: object, ctx: ContextTypes.DEFAULT_TYPE) -> None:

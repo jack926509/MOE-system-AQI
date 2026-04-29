@@ -102,7 +102,7 @@ def build_daily_report(db: Database) -> str:
             f"均 {worst.avg:.0f}（{worst_label}）"
         )
         lines.append(
-            f"　　　　　最高站 {html.escape(worst.peak_site)} "
+            f"　└─ 最高站 {html.escape(worst.peak_site)} "
             f"AQI {worst.peak:.0f}"
         )
 

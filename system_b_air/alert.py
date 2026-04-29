@@ -97,7 +97,10 @@ class AlertEvent:
     def to_message(self) -> str:
         import html as _html
         ts = self.publish_time.strftime("%Y-%m-%d %H:%M")
-        plant_tag = f"⚡ <b>{_html.escape(self.plant)}周界</b>　" if self.plant else ""
+        plant_line = (
+            f"⚡ <b>{_html.escape(self.plant)} 周界站</b>"
+            if self.plant else None
+        )
         loc = (
             f"{_html.escape(self.region)} ‧ {_html.escape(self.site_name)}"
             if self.scope == "station" and self.site_name
@@ -106,10 +109,12 @@ class AlertEvent:
 
         if self.pollutant == "aqi":
             flag, label = aqi_flag(self.value)
-            title = "空品惡化（區域）" if self.scope == "region" else "空品惡化"
-            lines = [
-                f"{flag} <b>{title}</b>",
-                f"{plant_tag}📍 {loc}".strip(),
+            title = "區域空品超標" if self.scope == "region" else "空品達告警標準"
+            lines = [f"{flag} <b>{title}</b>"]
+            if plant_line:
+                lines.append(plant_line)
+            lines += [
+                f"📍 {loc}",
                 f"AQI <b>{self.value:.0f}</b>　{label}",
                 f"警戒值 {self.threshold:.0f}",
                 f"🕐 {ts}",
@@ -136,9 +141,11 @@ class AlertEvent:
             val_fmt = f"{self.value:.1f}"
             th_fmt = f"{self.threshold:.1f}"
         name = self.pollutant.upper()
-        lines = [
-            f"⚠️ <b>{name} 超標</b>",
-            f"{plant_tag}📍 {loc}".strip(),
+        lines = [f"⚠️ <b>{name} 超標</b>"]
+        if plant_line:
+            lines.append(plant_line)
+        lines += [
+            f"📍 {loc}",
             f"{name} <b>{val_fmt}</b> {unit}",
             f"警戒值 {th_fmt} {unit}",
             f"🕐 {ts}",
